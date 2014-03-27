@@ -1,9 +1,8 @@
-package levigo
+package goleveldb
 
-// #include "leveldb/c.h"
 import "C"
 
-func boolToUchar(b bool) C.uchar {
+func bool2uchar(b bool) C.uchar {
 	uc := C.uchar(0)
 	if b {
 		uc = C.uchar(1)
@@ -11,7 +10,7 @@ func boolToUchar(b bool) C.uchar {
 	return uc
 }
 
-func ucharToBool(uc C.uchar) bool {
+func uchar2bool(uc C.uchar) bool {
 	if uc == C.uchar(0) {
 		return false
 	}

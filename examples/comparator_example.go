@@ -5,42 +5,52 @@ package main
 #include <string.h>
 #include <leveldb/c.h>
 
-static void CmpDestroy(void* arg) { }
+static void MyComparatorDestructor(void* state) {}
 
-static int CmpCompare(void* arg, const char* a, size_t alen,
-                      const char* b, size_t blen) {
-  int n = (alen < blen) ? alen : blen;
-  int r = memcmp(a, b, n);
-  if (r == 0) {
-    if (alen < blen) r = -1;
-    else if (alen > blen) r = +1;
-  }
-  return r;
+// A simple implementation of compare
+static int MyComparatorCompare(void* state,
+	const char* a, size_t alen,
+	const char* b, size_t blen) {
+
+	int n = (alen < blen) ? alen : blen;
+	int r = memcmp(a, b, n);
+
+	if (r == 0) {
+		if (alen < blen) {
+			r = -1;
+		} else if (alen > blen) {
+			r = +1;
+		}
+	}
+	return r;
 }
 
-static const char* CmpName(void* arg) {
-  return "foo";
+static const char* MyComparatorName(void* state) {
+	return "MyComparator";
 }
 
-static leveldb_comparator_t* CmpFooNew() {
-  return leveldb_comparator_create(NULL, CmpDestroy, CmpCompare, CmpName);
+static leveldb_comparator_t* NewMyComparator() {
+	return leveldb_comparator_create(NULL,
+		MyComparatorDestructor
+		MyComparatorCompare,
+		MyComparatorName);
 }
-
 */
 import "C"
 
 type Comparator struct {
-	Comparator *C.leveldb_comparator_t
+	comparator *C.leveldb_comparator_t
 }
 
-func NewFooComparator() *Comparator {
-	return &Comparator{C.CmpFooNew()}
+func NewMyComparator() *Comparator {
+	return &Comparator{C.NewMyComparator()}
 }
 
-func (cmp *Comparator) Close() {
-	C.leveldb_comparator_destroy(cmp.Comparator)
+func (cmp *Comparator) Destroy() {
+	C.leveldb_comparator_destroy(cmp.comparator)
+	cmp.comparator = nil
 }
 
 func main() {
-	NewFooComparator().Close()
+	NewMyComparator().Destroy()
 }

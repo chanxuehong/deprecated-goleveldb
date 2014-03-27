@@ -1,32 +1,41 @@
-package levigo
+package goleveldb
 
 // #cgo LDFLAGS: -lleveldb
-// #include <stdint.h>
 // #include "leveldb/c.h"
 import "C"
 
-// Cache is a cache used to store data read from data in memory.
+// A Cache is an interface that maps keys to values.  It has internal
+// synchronization and may be safely accessed concurrently from
+// multiple threads.  It may automatically evict entries to make room
+// for new entries.  Values have a specified charge against the cache
+// capacity.  For example, a cache where the values are variable
+// length strings, may use the length of the string as the charge for
+// the string.
 //
-// Typically, NewLRUCache is all you will need, but advanced users may
-// implement their own *C.leveldb_cache_t and create a Cache.
+// A builtin cache implementation with a least-recently-used eviction
+// policy is provided.  Clients may use their own implementations if
+// they want something more sophisticated (like scan-resistance, a
+// custom eviction policy, variable cache sizing, etc.)
 //
-// To prevent memory leaks, a Cache must have Close called on it when it is
-// no longer needed by the program. Note: if the process is shutting down,
-// this may not be necessary and could be avoided to shorten shutdown time.
+// To prevent memory leaks, a Cache must have Destroy called on it when it is
+// no longer needed by the program.
+//  NOTE: if the process is shutting down,
+//  this may not be necessary and could be avoided to shorten shutdown time.
 type Cache struct {
-	Cache *C.leveldb_cache_t
+	cache *C.leveldb_cache_t
 }
 
-// NewLRUCache creates a new Cache object with the capacity given.
+// NewLRUCache create a new cache with a fixed size capacity.
+// This implementation of Cache uses a least-recently-used eviction policy.
 //
-// To prevent memory leaks, Close should be called on the Cache when the
-// program no longer needs it. Note: if the process is shutting down, this may
-// not be necessary and could be avoided to shorten shutdown time.
+// To prevent memory leaks, Destroy should be called on the Cache when the
+// program no longer needs it.
 func NewLRUCache(capacity int) *Cache {
 	return &Cache{C.leveldb_cache_create_lru(C.size_t(capacity))}
 }
 
-// Close deallocates the underlying memory of the Cache object.
-func (c *Cache) Close() {
-	C.leveldb_cache_destroy(c.Cache)
+// Destroy deallocates the underlying memory of the Cache object.
+func (c *Cache) Destroy() {
+	C.leveldb_cache_destroy(c.cache)
+	c.cache = nil
 }

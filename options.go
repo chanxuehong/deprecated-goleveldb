@@ -1,229 +1,187 @@
-package levigo
+package goleveldb
 
 // #cgo LDFLAGS: -lleveldb
 // #include "leveldb/c.h"
 import "C"
 
-// CompressionOpt is a value for Options.SetCompression.
-type CompressionOpt int
+type CompressionType int
 
-// Known compression arguments for Options.SetCompression.
+// DB contents are stored in a set of blocks, each of which holds a
+// sequence of key,value pairs.  Each block may be compressed before
+// being stored in a file.  The following describes which
+// compression method (if any) is used to compress a block.
 const (
-	NoCompression     = CompressionOpt(0)
-	SnappyCompression = CompressionOpt(1)
+	// NOTE: do not change the values of existing entries, as these are
+	// part of the persistent format on disk.
+	NoCompression     CompressionType = 0x0
+	SnappyCompression CompressionType = 0x1
 )
 
-// Options represent all of the available options when opening a database with
-// Open. Options should be created with NewOptions.
+// Options to control the behavior of a database (passed to goleveldb.Open).
+//  NOTE: Options should be created with NewOptions.
 //
-// It is usually with to call SetCache with a cache object. Otherwise, all
-// data will be read off disk.
-//
-// To prevent memory leaks, Close must be called on an Options when the
+// To prevent memory leaks, Destroy must be called on an Options when the
 // program no longer needs it.
 type Options struct {
-	Opt *C.leveldb_options_t
-}
-
-// ReadOptions represent all of the available options when reading from a
-// database.
-//
-// To prevent memory leaks, Close must called on a ReadOptions when the
-// program no longer needs it.
-type ReadOptions struct {
-	Opt *C.leveldb_readoptions_t
-}
-
-// WriteOptions represent all of the available options when writeing from a
-// database.
-//
-// To prevent memory leaks, Close must called on a WriteOptions when the
-// program no longer needs it.
-type WriteOptions struct {
-	Opt *C.leveldb_writeoptions_t
+	opt *C.leveldb_options_t
 }
 
 // NewOptions allocates a new Options object.
 func NewOptions() *Options {
-	opt := C.leveldb_options_create()
-	return &Options{opt}
+	return &Options{C.leveldb_options_create()}
 }
 
-// NewReadOptions allocates a new ReadOptions object.
-func NewReadOptions() *ReadOptions {
-	opt := C.leveldb_readoptions_create()
-	return &ReadOptions{opt}
+// Destroy deallocates the Options, freeing its underlying C struct.
+func (o *Options) Destroy() {
+	C.leveldb_options_destroy(o.opt)
+	o.opt = nil
 }
 
-// NewWriteOptions allocates a new WriteOptions object.
-func NewWriteOptions() *WriteOptions {
-	opt := C.leveldb_writeoptions_create()
-	return &WriteOptions{opt}
-}
-
-// Close deallocates the Options, freeing its underlying C struct.
-func (o *Options) Close() {
-	C.leveldb_options_destroy(o.Opt)
-}
-
-// SetComparator sets the comparator to be used for all read and write
-// operations.
+// Comparator used to define the order of keys in the table.
+// If non-nil, use the specified comparator.
 //
-// The comparator that created a database must be the same one (technically,
-// one with the same name string) that is used to perform read and write
-// operations.
+//  Default: a comparator that uses lexicographic byte-wise ordering
 //
-// The default comparator is usually sufficient.
+// REQUIRES: The client must ensure that the comparator supplied
+// here has the same name and orders keys *exactly* the same as the
+// comparator provided to previous open calls on the same DB.
 func (o *Options) SetComparator(cmp *C.leveldb_comparator_t) {
-	C.leveldb_options_set_comparator(o.Opt, cmp)
+	if cmp != nil {
+		C.leveldb_options_set_comparator(o.opt, cmp)
+	}
 }
 
-// SetErrorIfExists, if passed true, will cause the opening of a database that
-// already exists to throw an error.
-func (o *Options) SetErrorIfExists(error_if_exists bool) {
-	eie := boolToUchar(error_if_exists)
-	C.leveldb_options_set_error_if_exists(o.Opt, eie)
-}
-
-// SetCache places a cache object in the database when a database is opened.
+// Use the specified filter policy to reduce disk reads.
+//  NOTE: you must call either SetFilterPolicy or SetBloomFilterPolicy,
+//  there is one of them applied at any time.
 //
-// This is usually wise to use. See also ReadOptions.SetFillCache.
-func (o *Options) SetCache(cache *Cache) {
-	C.leveldb_options_set_cache(o.Opt, cache.Cache)
+//  Default: nil
+func (o *Options) SetFilterPolicy(fp *C.leveldb_filterpolicy_t) {
+	C.leveldb_options_set_filter_policy(o.opt, fp)
 }
 
-// SetEnv sets the Env object for the new database handle.
-func (o *Options) SetEnv(env *Env) {
-	C.leveldb_options_set_env(o.Opt, env.Env)
-}
-
-// SetInfoLog sets a *C.leveldb_logger_t object as the informational logger
-// for the database.
-func (o *Options) SetInfoLog(log *C.leveldb_logger_t) {
-	C.leveldb_options_set_info_log(o.Opt, log)
-}
-
-// SetWriteBufferSize sets the number of bytes the database will build up in
-// memory (backed by an unsorted log on disk) before converting to a sorted
-// on-disk file.
-func (o *Options) SetWriteBufferSize(s int) {
-	C.leveldb_options_set_write_buffer_size(o.Opt, C.size_t(s))
-}
-
-// SetParanoidChecks, when called with true, will cause the database to do
-// aggressive checking of the data it is processing and will stop early if it
-// detects errors.
+// Use the specified filter policy to reduce disk reads.
+//  NOTE: you must call either SetFilterPolicy or SetBloomFilterPolicy,
+//  there is one of them applied at any time.
 //
-// See the LevelDB documentation docs for details.
-func (o *Options) SetParanoidChecks(pc bool) {
-	C.leveldb_options_set_paranoid_checks(o.Opt, boolToUchar(pc))
+//  Default: nil
+func (o *Options) SetBloomFilterPolicy(fp *FilterPolicy) {
+	if fp == nil {
+		C.leveldb_options_set_filter_policy(o.opt, nil)
+	} else {
+		C.leveldb_options_set_filter_policy(o.opt, fp.fp)
+	}
 }
 
-// SetMaxOpenFiles sets the number of files than can be used at once by the
-// database.
+// If not non-nil, use the specified object to interact with the environment,
+// e.g. to read/write files, schedule background work, etc.
 //
-// See the LevelDB documentation for details.
-func (o *Options) SetMaxOpenFiles(n int) {
-	C.leveldb_options_set_max_open_files(o.Opt, C.int(n))
+//  Default: C.leveldb_create_default_env()
+func (o *Options) SetEnv(env *C.leveldb_env_t) {
+	if env != nil {
+		C.leveldb_options_set_env(o.opt, env)
+	}
 }
 
-// SetBlockSize sets the approximate size of user data packed per block.
+// If true, the database will be created if it is missing.
 //
-// The default is roughly 4096 uncompressed bytes. A better setting depends on
-// your use case. See the LevelDB documentation for details.
-func (o *Options) SetBlockSize(s int) {
-	C.leveldb_options_set_block_size(o.Opt, C.size_t(s))
-}
-
-// SetBlockRestartInterval is the number of keys between restarts points for
-// delta encoding keys.
-//
-// Most clients should leave this parameter alone. See the LevelDB
-// documentation for details.
-func (o *Options) SetBlockRestartInterval(n int) {
-	C.leveldb_options_set_block_restart_interval(o.Opt, C.int(n))
-}
-
-// SetCompression sets whether to compress blocks using the specified
-// compresssion algorithm.
-//
-// The default value is SnappyCompression and it is fast enough that it is
-// unlikely you want to turn it off. The other option is NoCompression.
-//
-// If the LevelDB library was built without Snappy compression enabled, the
-// SnappyCompression setting will be ignored.
-func (o *Options) SetCompression(t CompressionOpt) {
-	C.leveldb_options_set_compression(o.Opt, C.int(t))
-}
-
-// SetCreateIfMissing causes Open to create a new database on disk if it does
-// not already exist.
+//  Default: false
 func (o *Options) SetCreateIfMissing(b bool) {
-	C.leveldb_options_set_create_if_missing(o.Opt, boolToUchar(b))
+	C.leveldb_options_set_create_if_missing(o.opt, bool2uchar(b))
 }
 
-// SetFilterPolicy causes Open to create a new database that will uses filter
-// created from the filter policy passed in.
-func (o *Options) SetFilterPolicy(fp *FilterPolicy) {
-	var policy *C.leveldb_filterpolicy_t
-	if fp != nil {
-		policy = fp.Policy
+// If true, an error is raised if the database already exists.
+//
+//  Default: false
+func (o *Options) SetErrorIfExists(b bool) {
+	C.leveldb_options_set_error_if_exists(o.opt, bool2uchar(b))
+}
+
+// If true, the implementation will do aggressive checking of the
+// data it is processing and will stop early if it detects any
+// errors.  This may have unforeseen ramifications: for example, a
+// corruption of one DB entry may cause a large number of entries to
+// become unreadable or for the entire DB to become unopenable.
+//
+//  Default: false
+func (o *Options) SetParanoidChecks(b bool) {
+	C.leveldb_options_set_paranoid_checks(o.opt, bool2uchar(b))
+}
+
+// Any internal progress/error information generated by the db will
+// be written to info_log if it is non-nil, or to a file stored
+// in the same directory as the DB contents if info_log is nil.
+//
+//  Default: nil
+func (o *Options) SetInfoLog(log *C.leveldb_logger_t) {
+	C.leveldb_options_set_info_log(o.opt, log)
+}
+
+// Amount of data to build up in memory (backed by an unsorted log
+// on disk) before converting to a sorted on-disk file.
+//
+// Larger values increase performance, especially during bulk loads.
+// Up to two write buffers may be held in memory at the same time,
+// so you may wish to adjust this parameter to control memory usage.
+// Also, a larger write buffer will result in a longer recovery time
+// the next time the database is opened.
+//
+//  Default: 4MB
+func (o *Options) SetWriteBufferSize(size int) {
+	C.leveldb_options_set_write_buffer_size(o.opt, C.size_t(size))
+}
+
+// Number of open files that can be used by the DB.  You may need to
+// increase this if your database has a large working set (budget
+// one open file per 2MB of working set).
+//
+//  Default: 1000
+func (o *Options) SetMaxOpenFiles(n int) {
+	C.leveldb_options_set_max_open_files(o.opt, C.int(n))
+}
+
+// If non-nil, use the specified cache for blocks.
+//
+//  Default: leveldb will automatically create and use an 8MB internal cache.
+func (o *Options) SetCache(cache *Cache) {
+	if cache != nil {
+		C.leveldb_options_set_cache(o.opt, cache.cache)
 	}
-	C.leveldb_options_set_filter_policy(o.Opt, policy)
 }
 
-// Close deallocates the ReadOptions, freeing its underlying C struct.
-func (ro *ReadOptions) Close() {
-	C.leveldb_readoptions_destroy(ro.Opt)
+// Approximate size of user data packed per block.  Note that the
+// block size specified here corresponds to uncompressed data.  The
+// actual size of the unit read from disk may be smaller if
+// compression is enabled.  This parameter can be changed dynamically.
+//
+//  Default: 4K
+func (o *Options) SetBlockSize(size int) {
+	C.leveldb_options_set_block_size(o.opt, C.size_t(size))
 }
 
-// SetVerifyChecksums controls whether all data read with this ReadOptions
-// will be verified against corresponding checksums.
+// Number of keys between restart points for delta encoding of keys.
+// This parameter can be changed dynamically.  Most clients should
+// leave this parameter alone.
 //
-// It defaults to false. See the LevelDB documentation for details.
-func (ro *ReadOptions) SetVerifyChecksums(b bool) {
-	C.leveldb_readoptions_set_verify_checksums(ro.Opt, boolToUchar(b))
+//  Default: 16
+func (o *Options) SetBlockRestartInterval(n int) {
+	C.leveldb_options_set_block_restart_interval(o.opt, C.int(n))
 }
 
-// SetFillCache controls whether reads performed with this ReadOptions will
-// fill the Cache of the server. It defaults to true.
+// Compress blocks using the specified compression algorithm.  This
+// parameter can be changed dynamically.
 //
-// It is useful to turn this off on ReadOptions for DB.Iterator (and DB.Get)
-// calls used in offline threads to prevent bulk scans from flushing out live
-// user data in the cache.
+//  Default: SnappyCompression, which gives lightweight but fast
+//  compression.
 //
-// See also Options.SetCache
-func (ro *ReadOptions) SetFillCache(b bool) {
-	C.leveldb_readoptions_set_fill_cache(ro.Opt, boolToUchar(b))
-}
-
-// SetSnapshot causes reads to provided as they were when the passed in
-// Snapshot was created by DB.NewSnapshot. This is useful for getting
-// consistent reads during a bulk operation.
-//
-// See the LevelDB documentation for details.
-func (ro *ReadOptions) SetSnapshot(snap *Snapshot) {
-	var s *C.leveldb_snapshot_t
-	if snap != nil {
-		s = snap.snap
-	}
-	C.leveldb_readoptions_set_snapshot(ro.Opt, s)
-}
-
-// Close deallocates the WriteOptions, freeing its underlying C struct.
-func (wo *WriteOptions) Close() {
-	C.leveldb_writeoptions_destroy(wo.Opt)
-}
-
-// SetSync controls whether each write performed with this WriteOptions will
-// be flushed from the operating system buffer cache before the write is
-// considered complete.
-//
-// If called with true, this will signficantly slow down writes. If called
-// with false, and the host machine crashes, some recent writes may be
-// lost. The default is false.
-//
-// See the LevelDB documentation for details.
-func (wo *WriteOptions) SetSync(b bool) {
-	C.leveldb_writeoptions_set_sync(wo.Opt, boolToUchar(b))
+// Typical speeds of SnappyCompression on an Intel(R) Core(TM)2 2.4GHz:
+//   ~200-500MB/s compression
+//   ~400-800MB/s decompression
+// Note that these speeds are significantly faster than most
+// persistent storage speeds, and therefore it is typically never
+// worth switching to SnappyCompression.  Even if the input data is
+// incompressible, the SnappyCompression implementation will
+// efficiently detect that and will switch to uncompressed mode.
+func (o *Options) SetCompression(t CompressionType) {
+	C.leveldb_options_set_compression(o.opt, C.int(t))
 }

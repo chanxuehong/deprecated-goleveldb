@@ -1,4 +1,4 @@
-package levigo
+package goleveldb
 
 import (
 	"bytes"
@@ -18,14 +18,12 @@ func init() {
 func TestC(t *testing.T) {
 	dbname := tempDir(t)
 	defer deleteDBDirectory(t, dbname)
-	env := NewDefaultEnv()
 	cache := NewLRUCache(1 << 20)
 
 	options := NewOptions()
 	// options.SetComparator(cmp)
 	options.SetErrorIfExists(true)
 	options.SetCache(cache)
-	options.SetEnv(env)
 	options.SetInfoLog(nil)
 	options.SetWriteBufferSize(1 << 20)
 	options.SetParanoidChecks(true)
@@ -73,9 +71,9 @@ func TestC(t *testing.T) {
 	if err != nil {
 		t.Errorf("Write batch failed: %v", err)
 	}
-	CheckGet(t, "after WriteBatch", db, roptions, []byte("foo"), []byte("hello"))
-	CheckGet(t, "after WriteBatch", db, roptions, []byte("bar"), nil)
-	CheckGet(t, "after WriteBatch", db, roptions, []byte("box"), []byte("c"))
+	CheckGet(t, "after WriteBatch1", db, roptions, []byte("foo"), []byte("hello"))
+	CheckGet(t, "after WriteBatch2", db, roptions, []byte("bar"), nil)
+	CheckGet(t, "after WriteBatch3", db, roptions, []byte("box"), []byte("c"))
 	// TODO: WriteBatch iteration isn't easy. Suffers same problems as
 	// Comparator.
 	// wbiter := &TestWBIter{t: t}
@@ -83,7 +81,7 @@ func TestC(t *testing.T) {
 	// if wbiter.pos != 3 {
 	// 	t.Errorf("After Iterate, on the wrong pos: %d", wbiter.pos)
 	// }
-	wb.Close()
+	wb.Destroy()
 
 	iter := db.NewIterator(roptions)
 	if iter.Valid() {
@@ -106,8 +104,8 @@ func TestC(t *testing.T) {
 	CheckIter(t, iter, []byte("foo"), []byte("hello"))
 	iter.Seek([]byte("b"))
 	CheckIter(t, iter, []byte("box"), []byte("c"))
-	if iter.GetError() != nil {
-		t.Errorf("Read iterator has an error we didn't expect: %v", iter.GetError())
+	if iter.Error() != nil {
+		t.Errorf("Read iterator has an error we didn't expect: %v", iter.Error())
 	}
 	iter.Close()
 
@@ -140,17 +138,17 @@ func TestC(t *testing.T) {
 	}
 
 	// property
-	prop := db.PropertyValue("nosuchprop")
+	prop := db.GetProperty("nosuchprop")
 	if prop != "" {
 		t.Errorf("property nosuchprop should not have a value")
 	}
-	prop = db.PropertyValue("leveldb.stats")
+	prop = db.GetProperty("leveldb.stats")
 	if prop == "" {
 		t.Errorf("property leveldb.stats should have a value")
 	}
 
 	// snapshot
-	snap := db.NewSnapshot()
+	snap := db.GetSnapshot()
 	err = db.Delete(woptions, []byte("foo"))
 	if err != nil {
 		t.Errorf("Delete during snapshot test errored: %v", err)
@@ -180,10 +178,10 @@ func TestC(t *testing.T) {
 	options.SetErrorIfExists(true)
 
 	// filter
-	policy := NewBloomFilter(10)
+	policy := NewBloomFilterPolicy(10)
 	db.Close()
 	DestroyDatabase(dbname, options)
-	options.SetFilterPolicy(policy)
+	options.SetBloomFilterPolicy(policy)
 	db, err = Open(dbname, options)
 	if err != nil {
 		t.Fatalf("Unable to recreate db for filter tests: %v", err)
@@ -196,20 +194,19 @@ func TestC(t *testing.T) {
 	if err != nil {
 		t.Errorf("Unable to put 'bar' with filter: %v", err)
 	}
-	db.CompactRange(Range{nil, nil})
+	db.CompactRange(nil, nil)
 	CheckGet(t, "filter", db, roptions, []byte("foo"), []byte("foovalue"))
 	CheckGet(t, "filter", db, roptions, []byte("bar"), []byte("barvalue"))
 	options.SetFilterPolicy(nil)
-	policy.Close()
+	policy.Destroy()
 
 	// cleanup
 	db.Close()
-	options.Close()
-	roptions.Close()
-	woptions.Close()
-	cache.Close()
+	options.Destroy()
+	roptions.Destroy()
+	woptions.Destroy()
+	cache.Destroy()
 	// DestroyComparator(cmp)
-	env.Close()
 }
 
 func TestNilSlicesInDb(t *testing.T) {
@@ -225,7 +222,7 @@ func TestNilSlicesInDb(t *testing.T) {
 		t.Fatalf("Database could not be opened: %v", err)
 	}
 	val, err := db.Get(ro, []byte("missing"))
-	if err != nil {
+	if err != nil && err != ErrNotFound {
 		t.Errorf("Get failed: %v", err)
 	}
 	if val != nil {
@@ -304,7 +301,7 @@ func TestIterationValidityLimits(t *testing.T) {
 	if it.Valid() {
 		t.Errorf("iterating off the db should result in an invalid iterator")
 	}
-	err = it.GetError()
+	err = it.Error()
 	if err != nil {
 		t.Errorf("should not have seen an error on an invalid iterator")
 	}
@@ -317,7 +314,7 @@ func TestIterationValidityLimits(t *testing.T) {
 func CheckGet(t *testing.T, where string, db *DB, roptions *ReadOptions, key, expected []byte) {
 	getValue, err := db.Get(roptions, key)
 
-	if err != nil {
+	if err != nil && err != ErrNotFound {
 		t.Errorf("%s, Get failed: %v", where, err)
 	}
 	if !bytes.Equal(getValue, expected) {
@@ -348,7 +345,7 @@ func deleteDBDirectory(t *testing.T, dirPath string) {
 }
 
 func tempDir(t *testing.T) string {
-	bottom := fmt.Sprintf("levigo-test-%d", rand.Int())
+	bottom := fmt.Sprintf("goleveldb-test-%d", rand.Int())
 	path := filepath.Join(os.TempDir(), bottom)
 	deleteDBDirectory(t, path)
 	return path
