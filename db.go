@@ -26,7 +26,6 @@ import "C"
 
 import (
 	"errors"
-	"strconv"
 	"unsafe"
 )
 
