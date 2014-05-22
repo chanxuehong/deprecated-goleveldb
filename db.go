@@ -170,10 +170,12 @@ func (db *DB) Close() {
 	db.defaultWOpt = nil
 }
 
-func (db *DB) Version() string {
-	return strconv.Itoa(int(C.leveldb_major_version())) +
-		"." +
-		strconv.Itoa(int(C.leveldb_minor_version()))
+func (db *DB) MajorVersion() int {
+	return int(C.leveldb_major_version())
+}
+
+func (db *DB) MinorVersion() int {
+	return int(C.leveldb_minor_version())
 }
 
 // The following variables exists only to get a valid address for
